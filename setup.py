@@ -29,7 +29,7 @@ setup(
         ]
     },
     author="Azumi Team",
-    author_email="contact@azumi.ai",
+    author_email="support@azumi.fun",
     description="A framework for creating artificial personalities and narrative ecosystems",
     long_description=open("README.md").read(),
     long_description_content_type="text/markdown",
