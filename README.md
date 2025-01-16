@@ -53,6 +53,7 @@ azumi/
 ├── requirements.txt
 ├── setup.py
 ├── LICENSE
+├── SECURITY.md
 └── README.md
 ```
 
