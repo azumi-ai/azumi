@@ -46,10 +46,11 @@ azumi/
 ├── examples/
 │   ├── basic_usage.py
 │   └── advanced_scenarios.py
-├── docs/
-│   ├── architecture/
-│   ├── api/
-│   └── tutorials/
+├── security/
+│   ├── monitor.py
+│   ├── audit.py
+│   ├── rate_limiter.py
+│   └── sanitizer.py
 ├── requirements.txt
 ├── setup.py
 ├── LICENSE
