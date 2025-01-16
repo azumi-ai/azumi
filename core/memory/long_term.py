@@ -208,3 +208,4 @@ class LongTermMemory:
     def _get_cache_key(self, memory_id: str) -> str:
         """Generate consistent cache key."""
         return f"memory_{memory_id}"
+        
