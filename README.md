@@ -60,7 +60,7 @@ azumi/
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/team-azumi/azumi.git
+git clone https://github.com/azumi-ai/azumi.git
 cd azumi
 ```
 
