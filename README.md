@@ -12,50 +12,118 @@ Azumi is a revolutionary framework for creating artificial personalities and nar
 
 ```
 azumi/
-├── core/
-│   ├── personality_engine/
+├── core/                          # Core framework components
+│   ├── personality_engine/        # Personality processing
 │   │   ├── identity.py
 │   │   ├── traits.py
 │   │   └── cognitive.py
-│   ├── emotional/
+│   ├── emotional/                 # Emotional intelligence
 │   │   ├── detection.py
 │   │   ├── response.py
 │   │   └── learning.py
-│   └── memory/
+│   └── memory/                    # Memory architecture
 │       ├── short_term.py
 │       ├── long_term.py
 │       └── integration.py
-├── narrative/
-│   ├── generator.py
-│   ├── conflict.py
-│   └── environment.py
-├── models/
-│   ├── personality/
-│   ├── emotion/
-│   └── memory/
-├── api/
-│   ├── rest/
-│   └── websocket/
-├── utils/
-│   ├── data_processing.py
-│   ├── validation.py
-│   └── security.py
-├── tests/
-│   ├── unit/
-│   └── integration/
-├── examples/
+├── studio/                        # Studio toolkit components
+│   ├── designer/                  # Character design tools
+│   │   ├── personality.py
+│   │   ├── scenario.py
+│   │   ├── relationship.py
+│   │   └── visualization.py
+│   ├── testing/                   # Testing environment
+│   │   ├── environment.py
+│   │   ├── simulation.py
+│   │   └── metrics.py
+│   └── analytics/                 # Studio analytics
+│       ├── performance.py
+│       ├── tracking.py
+│       └── reporting.py
+├── applications/                  # Domain-specific implementations
+│   ├── gaming/                    # Gaming applications
+│   │   ├── npc.py
+│   │   ├── storytelling.py
+│   │   └── world.py
+│   ├── education/                 # Educational tools
+│   │   ├── tutor.py
+│   │   ├── simulation.py
+│   │   └── progress.py
+│   ├── health/                    # Mental health applications
+│   │   ├── therapeutic.py
+│   │   ├── support.py
+│   │   └── tracking.py
+│   └── business/                  # Business solutions
+│       ├── assistant.py
+│       ├── customer_service.py
+│       └── brand.py
+├── research/                      # Research and experimental features
+│   ├── modeling/                  # Advanced modeling
+│   │   ├── personality.py
+│   │   ├── emotion.py
+│   │   └── interaction.py
+│   ├── experimental/              # Experimental features
+│   │   ├── consciousness.py
+│   │   ├── evolution.py
+│   │   └── adaptation.py
+│   └── analysis/                  # Research analysis
+│       ├── metrics.py
+│       ├── visualization.py
+│       └── reporting.py
+├── integration/                   # Integration tools
+│   ├── plugins/                   # Plugin system
+│   │   ├── llm.py
+│   │   ├── database.py
+│   │   └── api.py
+│   ├── connectors/                # External connectors
+│   │   ├── game_engines.py
+│   │   ├── education_platforms.py
+│   │   └── health_systems.py
+│   └── protocols/                 # Communication protocols
+│       ├── sync.py
+│       ├── async.py
+│       └── streaming.py
+├── analytics/                     # Analytics system
+│   ├── metrics/                   # Metric collection
+│   │   ├── performance.py
+│   │   ├── behavior.py
+│   │   └── interaction.py
+│   ├── reporting/                 # Report generation
+│   │   ├── templates.py
+│   │   ├── generation.py
+│   │   └── export.py
+│   └── visualization/             # Data visualization
+│       ├── plots.py
+│       ├── dashboards.py
+│       └── interactive.py
+├── security/                      # Security components
+│   ├── monitor.py                 # Security monitoring
+│   ├── audit.py                   # Audit logging
+│   ├── rate_limiter.py           # Rate limiting
+│   └── sanitizer.py              # Input sanitization
+├── tools/                         # Development tools
+│   ├── debugging/                 # Debugging utilities
+│   │   ├── personality.py
+│   │   ├── memory.py
+│   │   └── interaction.py
+│   ├── testing/                   # Testing utilities
+│   │   ├── simulation.py
+│   │   ├── scenarios.py
+│   │   └── validation.py
+│   └── deployment/                # Deployment tools
+│       ├── packaging.py
+│       ├── distribution.py
+│       └── monitoring.py
+├── examples/                      # Example implementations
 │   ├── basic_usage.py
 │   └── advanced_scenarios.py
-├── security/
-│   ├── monitor.py
-│   ├── audit.py
-│   ├── rate_limiter.py
-│   └── sanitizer.py
-├── requirements.txt
-├── setup.py
-├── LICENSE
-├── SECURITY.md
-└── README.md
+├── tests/                         # Test suite
+│   ├── unit/
+│   └── integration/
+├── requirements.txt               # Project dependencies
+├── setup.py                       # Package configuration
+├── LICENSE                        # License information
+├── SECURITY.md                    # Security documentation
+└── README.md                      # Project documentation
 ```
 
 ## 🚀 Quick Start
