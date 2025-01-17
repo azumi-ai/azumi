@@ -234,7 +234,7 @@ Benchmarks on standard hardware (Intel i7, 32GB RAM):
 
 ## 📞 Support
 
-- Documentation: [docs.azumi.ai](https://docs.azumi.ai)
+- Documentation: [docs.azumi.fun](https://docs.azumi.fun)
 - X: [AzumiDotFun](https://x.com/AzumiDotFun)
 - Email: support@azumi.fun
 
