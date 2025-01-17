@@ -1,156 +1,252 @@
-import torch
-import torch.nn as nn
-from typing import Dict, List, Optional, Any
-import plotly.graph_objects as go
-import networkx as nx
-import numpy as np
+from typing import Dict, List, Optional, Any, Union
+import asyncio
 from dataclasses import dataclass
+import plotly.graph_objects as go
+import plotly.express as px
+import numpy as np
+import pandas as pd
+from dash import Dash, dcc, html, Input, Output, State
+from dash.exceptions import PreventUpdate
+import networkx as nx
+from cachetools import TTLCache, LRUCache
+import time
 
 @dataclass
 class VisualizationConfig:
-    width: int = 800
-    height: int = 600
-    theme: str = "light"
-    animation_frame_duration: int = 500
+    update_interval: int = 100  # milliseconds
+    max_points: int = 10000
+    cache_ttl: int = 60  # seconds
+    batch_size: int = 1000
+    data_retention: int = 3600  # seconds
 
-class PersonalityVisualizer:
-    """Visualizes personality traits and relationships."""
+class DataStreamer:
+    """Efficient data streaming for real-time visualization."""
     
     def __init__(self, config: VisualizationConfig):
         self.config = config
-        self.figures = {}
+        self.streams = {}
+        self.buffers = {}
+        self._callbacks = {}
         
-    def create_trait_visualization(
+    async def register_stream(
         self,
-        traits: Dict[str, float],
-        history: Optional[List[Dict[str, float]]] = None
-    ) -> go.Figure:
-        """Create interactive trait visualization."""
-        # Create radar chart for traits
-        categories = list(traits.keys())
-        values = list(traits.values())
+        stream_id: str,
+        callback: callable
+    ) -> None:
+        """Register data stream with callback."""
+        self.streams[stream_id] = {
+            'last_update': time.time(),
+            'data': []
+        }
+        self._callbacks[stream_id] = callback
         
+    async def update_stream(
+        self,
+        stream_id: str,
+        data: Any
+    ) -> None:
+        """Update stream data."""
+        if stream_id not in self.streams:
+            return
+            
+        stream = self.streams[stream_id]
+        stream['data'].append(data)
+        stream['last_update'] = time.time()
+        
+        # Trim old data
+        if len(stream['data']) > self.config.max_points:
+            stream['data'] = stream['data'][-self.config.max_points:]
+        
+        # Trigger callback
+        if stream_id in self._callbacks:
+            await self._callbacks[stream_id](data)
+
+class VisualizationManager:
+    """Enhanced visualization management system."""
+    
+    def __init__(self, config: Optional[VisualizationConfig] = None):
+        self.config = config or VisualizationConfig()
+        self.app = Dash(__name__)
+        self.figures = {}
+        self.data_streamer = DataStreamer(self.config)
+        self.cache = TTLCache(maxsize=1000, ttl=self.config.cache_ttl)
+        
+        self._setup_layout()
+        self._setup_callbacks()
+    
+    def _setup_layout(self) -> None:
+        """Setup dashboard layout."""
+        self.app.layout = html.Div([
+            dcc.Store(id='visualization-store'),
+            html.Div(id='visualization-container'),
+            dcc.Interval(
+                id='interval-component',
+                interval=self.config.update_interval,
+                n_intervals=0
+            )
+        ])
+    
+    def _setup_callbacks(self) -> None:
+        """Setup interactive callbacks."""
+        @self.app.callback(
+            Output('visualization-store', 'data'),
+            Input('interval-component', 'n_intervals')
+        )
+        def update_store(n):
+            if not n:
+                raise PreventUpdate
+            return self._get_current_data()
+        
+        @self.app.callback(
+            Output('visualization-container', 'children'),
+            Input('visualization-store', 'data')
+        )
+        def update_visualizations(data):
+            if not data:
+                raise PreventUpdate
+            return self._create_visualization_layout(data)
+    
+    async def create_visualization(
+        self,
+        viz_id: str,
+        viz_type: str,
+        data: Any,
+        options: Optional[Dict[str, Any]] = None
+    ) -> None:
+        """Create new visualization."""
+        if viz_type == 'real_time_line':
+            fig = await self._create_real_time_line(data, options)
+        elif viz_type == 'network_graph':
+            fig = await self._create_network_graph(data, options)
+        elif viz_type == 'heatmap':
+            fig = await self._create_heatmap(data, options)
+        elif viz_type == '3d_scatter':
+            fig = await self._create_3d_scatter(data, options)
+        else:
+            raise ValueError(f"Unknown visualization type: {viz_type}")
+        
+        self.figures[viz_id] = {
+            'type': viz_type,
+            'figure': fig,
+            'options': options or {}
+        }
+    
+    async def _create_real_time_line(
+        self,
+        data: pd.DataFrame,
+        options: Optional[Dict[str, Any]] = None
+    ) -> go.Figure:
+        """Create real-time line chart."""
         fig = go.Figure()
         
-        # Add current traits
-        fig.add_trace(go.Scatterpolar(
-            r=values,
-            theta=categories,
-            fill='toself',
-            name='Current Traits'
-        ))
-        
-        # Add historical traits if available
-        if history:
-            for i, past_traits in enumerate(history[-5:]):  # Show last 5 states
-                fig.add_trace(go.Scatterpolar(
-                    r=list(past_traits.values()),
-                    theta=categories,
-                    name=f'Past State {i}',
-                    opacity=0.3
-                ))
-        
-        # Update layout
-        fig.update_layout(
-            polar=dict(
-                radialaxis=dict(
-                    visible=True,
-                    range=[0, 1]
+        for column in data.select_dtypes(include=[np.number]).columns:
+            fig.add_trace(
+                go.Scatter(
+                    x=data.index,
+                    y=data[column],
+                    name=column,
+                    mode='lines',
+                    line=dict(width=2),
                 )
-            ),
+            )
+        
+        fig.update_layout(
+            uirevision=True,  # Preserve zoom on updates
             showlegend=True,
-            width=self.config.width,
-            height=self.config.height,
-            template=self.config.theme
+            margin=dict(l=20, r=20, t=40, b=20),
+            hovermode='closest',
+            **options.get('layout', {}) if options else {}
         )
         
         return fig
     
-    def create_relationship_graph(
+    async def _create_network_graph(
         self,
-        relationships: Dict[str, Dict[str, float]],
-        character_data: Optional[Dict[str, Any]] = None
+        data: nx.Graph,
+        options: Optional[Dict[str, Any]] = None
     ) -> go.Figure:
-        """Create interactive relationship graph visualization."""
-        G = nx.Graph()
+        """Create interactive network graph."""
+        pos = nx.spring_layout(data)
         
-        # Add nodes (characters)
-        for character in relationships.keys():
-            G.add_node(
-                character,
-                data=character_data.get(character, {}) if character_data else {}
-            )
-        
-        # Add edges (relationships)
-        for char1, relations in relationships.items():
-            for char2, strength in relations.items():
-                G.add_edge(char1, char2, weight=strength)
-        
-        # Calculate layout
-        pos = nx.spring_layout(G)
-        
-        # Create visualization
-        fig = go.Figure()
-        
-        # Add edges
-        edge_x = []
-        edge_y = []
-        edge_weights = []
-        
-        for edge in G.edges(data=True):
-            x0, y0 = pos[edge[0]]
-            x1, y1 = pos[edge[1]]
-            edge_x.extend([x0, x1, None])
-            edge_y.extend([y0, y1, None])
-            edge_weights.append(edge[2]['weight'])
-        
-        fig.add_trace(go.Scatter(
-            x=edge_x,
-            y=edge_y,
-            line=dict(
-                width=1,
-                color='#888'
-            ),
+        edge_trace = go.Scatter(
+            x=[],
+            y=[],
+            line=dict(width=0.5, color='#888'),
             hoverinfo='none',
             mode='lines'
-        ))
+        )
         
-        # Add nodes
-        node_x = []
-        node_y = []
-        node_text = []
+        for edge in data.edges():
+            x0, y0 = pos[edge[0]]
+            x1, y1 = pos[edge[1]]
+            edge_trace['x'] += (x0, x1, None)
+            edge_trace['y'] += (y0, y1, None)
         
-        for node in G.nodes():
-            x, y = pos[node]
-            node_x.append(x)
-            node_y.append(y)
-            node_text.append(str(node))
-        
-        fig.add_trace(go.Scatter(
-            x=node_x,
-            y=node_y,
+        node_trace = go.Scatter(
+            x=[pos[node][0] for node in data.nodes()],
+            y=[pos[node][1] for node in data.nodes()],
             mode='markers+text',
             hoverinfo='text',
-            text=node_text,
-            textposition='top center',
             marker=dict(
-                size=20,
-                color='#1f77b4',
-                line=dict(
-                    width=2,
-                    color='#fff'
-                )
+                size=10,
+                line=dict(width=2)
             )
-        ))
+        )
         
-        # Update layout
-        fig.update_layout(
-            showlegend=False,
-            hovermode='closest',
-            margin=dict(b=20, l=5, r=5, t=40),
-            width=self.config.width,
-            height=self.config.height,
-            template=self.config.theme
+        fig = go.Figure(
+            data=[edge_trace, node_trace],
+            layout=go.Layout(
+                showlegend=False,
+                hovermode='closest',
+                margin=dict(b=20, l=5, r=5, t=40),
+                **options.get('layout', {}) if options else {}
+            )
         )
         
         return fig
+    
+    async def update_visualization(
+        self,
+        viz_id: str,
+        data: Any
+    ) -> None:
+        """Update existing visualization."""
+        if viz_id not in self.figures:
+            return
+            
+        viz = self.figures[viz_id]
+        
+        if viz['type'] == 'real_time_line':
+            await self._update_real_time_line(viz, data)
+        elif viz['type'] == 'network_graph':
+            await self._update_network_graph(viz, data)
+        elif viz['type'] == 'heatmap':
+            await self._update_heatmap(viz, data)
+        elif viz['type'] == '3d_scatter':
+            await self._update_3d_scatter(viz, data)
+    
+    async def _update_real_time_line(
+        self,
+        viz: Dict[str, Any],
+        data: pd.DataFrame
+    ) -> None:
+        """Update real-time line chart."""
+        with viz['figure'].batch_update():
+            for i, column in enumerate(
+                data.select_dtypes(include=[np.number]).columns
+            ):
+                viz['figure'].data[i].x = data.index
+                viz['figure'].data[i].y = data[column]
+    
+    def run(
+        self,
+        host: str = '0.0.0.0',
+        port: int = 8050,
+        debug: bool = False
+    ) -> None:
+        """Run visualization server."""
+        self.app.run_server(
+            host=host,
+            port=port,
+            debug=debug
+        )
