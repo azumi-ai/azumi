@@ -1,10 +1,14 @@
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 import torch
 import torch.nn as nn
 import numpy as np
 from dataclasses import dataclass
-from collections import deque
 import logging
+from collections import defaultdict, deque
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+import time
+from cachetools import TTLCache, LRUCache
 
 logger = logging.getLogger(__name__)
 
@@ -16,8 +20,110 @@ class EmotionalLearningConfig:
     update_frequency: int = 100
     min_samples: int = 50
     emotion_dims: int = 8
+    hidden_size: int = 256
+    cache_ttl: int = 3600  # 1 hour
+    max_patterns: int = 10000
+    adaptation_threshold: float = 0.1
+
+class EmotionalNetwork(nn.Module):
+    """Neural network for emotional pattern learning."""
+    
+    def __init__(self, config: EmotionalLearningConfig):
+        super().__init__()
+        self.config = config
+        
+        # Emotion embedding
+        self.emotion_embedding = nn.Embedding(
+            config.emotion_dims,
+            config.hidden_size
+        )
+        
+        # Pattern recognition
+        self.pattern_network = nn.Sequential(
+            nn.Linear(config.hidden_size, config.hidden_size * 2),
+            nn.LayerNorm(config.hidden_size * 2),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(config.hidden_size * 2, config.hidden_size),
+            nn.LayerNorm(config.hidden_size)
+        )
+        
+        # Response generation
+        self.response_network = nn.Sequential(
+            nn.Linear(config.hidden_size * 2, config.hidden_size),
+            nn.LayerNorm(config.hidden_size),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(config.hidden_size, config.emotion_dims)
+        )
+        
+        self.to(torch.device('cuda' if torch.cuda.is_available() else 'cpu'))
+
+class EmotionalMemory:
+    """Efficient emotional memory system."""
+    
+    def __init__(self, config: EmotionalLearningConfig):
+        self.config = config
+        self.patterns = deque(maxlen=config.max_patterns)
+        self.pattern_embeddings = {}
+        self.importance_scores = defaultdict(float)
+        
+        # Caching
+        self.pattern_cache = TTLCache(
+            maxsize=1000,
+            ttl=config.cache_ttl
+        )
+        self.embedding_cache = LRUCache(maxsize=1000)
+    
+    async def add_pattern(
+        self,
+        pattern: Dict[str, Any],
+        embedding: torch.Tensor,
+        importance: float
+    ) -> str:
+        """Add emotional pattern to memory."""
+        pattern_id = str(time.time())
+        
+        # Store pattern
+        self.patterns.append({
+            'id': pattern_id,
+            'pattern': pattern,
+            'timestamp': time.time()
+        })
+        
+        # Store embedding and importance
+        self.pattern_embeddings[pattern_id] = embedding
+        self.importance_scores[pattern_id] = importance
+        
+        return pattern_id
+    
+    async def get_similar_patterns(
+        self,
+        embedding: torch.Tensor,
+        limit: int = 10
+    ) -> List[Dict[str, Any]]:
+        """Get similar emotional patterns."""
+        if len(self.patterns) == 0:
+            return []
+            
+        # Calculate similarities
+        similarities = []
+        for pattern in self.patterns:
+            pattern_id = pattern['id']
+            if pattern_id in self.pattern_embeddings:
+                similarity = torch.cosine_similarity(
+                    embedding.unsqueeze(0),
+                    self.pattern_embeddings[pattern_id].unsqueeze(0)
+                ).item()
+                similarities.append((similarity, pattern))
+        
+        # Sort by similarity and return top matches
+        similarities.sort(key=lambda x: x[0], reverse=True)
+        return [p for _, p in similarities[:limit]]
 
 class EmotionalLearning:
+    """Optimized emotional learning system."""
+    
     def __init__(
         self,
         config: Optional[EmotionalLearningConfig] = None,
@@ -25,28 +131,23 @@ class EmotionalLearning:
     ):
         self.config = config or EmotionalLearningConfig()
         self.emotion_detector = emotion_detector
-        self.emotional_memory = deque(maxlen=self.config.memory_size)
-        self.learning_step = 0
+        self.network = EmotionalNetwork(self.config)
+        self.memory = EmotionalMemory(self.config)
         
-        # Initialize emotion embeddings
-        self.emotion_embeddings = nn.Parameter(
-            torch.randn(self.config.emotion_dims, 128)
-        )
-        
+        # Initialize optimizer
         self.optimizer = torch.optim.Adam(
-            [self.emotion_embeddings],
+            self.network.parameters(),
             lr=self.config.learning_rate
         )
         
-        self._setup_metrics()
-    
-    def _setup_metrics(self):
-        self.metrics = {
-            'total_interactions': 0,
-            'successful_responses': 0,
-            'learning_iterations': 0,
-            'average_feedback': 0.0,
-        }
+        # Training state
+        self.training_buffer = []
+        self.learning_step = 0
+        self._executor = ThreadPoolExecutor(max_workers=4)
+        
+        # Metrics
+        self.metrics = defaultdict(float)
+        self.adaptation_history = deque(maxlen=1000)
     
     async def learn_from_interaction(
         self,
@@ -54,113 +155,192 @@ class EmotionalLearning:
         response: str,
         feedback: float,
         context: Optional[Dict[str, Any]] = None
-    ) -> None:
+    ) -> Dict[str, Any]:
+        """Learn from interaction with emotion detection."""
         try:
             # Detect emotions
-            emotions = await self.emotion_detector.detect_emotions(text)
+            text_emotions = await self.emotion_detector.detect_emotions(text)
             response_emotions = await self.emotion_detector.detect_emotions(response)
             
-            # Store interaction
-            interaction = {
-                'text_emotions': emotions,
+            # Create interaction pattern
+            pattern = {
+                'text_emotions': text_emotions,
                 'response_emotions': response_emotions,
                 'feedback': feedback,
-                'context': context
+                'context': context or {}
             }
             
-            self.emotional_memory.append(interaction)
-            self._update_metrics(feedback)
+            # Generate pattern embedding
+            embedding = await self._generate_embedding(pattern)
             
-            # Perform learning if enough samples
-            if (len(self.emotional_memory) >= self.config.min_samples and
-                self.learning_step % self.config.update_frequency == 0):
-                await self._update_emotion_model()
+            # Calculate importance
+            importance = await self._calculate_importance(
+                pattern,
+                embedding,
+                feedback
+            )
             
-            self.learning_step += 1
+            # Store pattern
+            pattern_id = await self.memory.add_pattern(
+                pattern,
+                embedding,
+                importance
+            )
+            
+            # Add to training buffer
+            self.training_buffer.append({
+                'pattern': pattern,
+                'embedding': embedding,
+                'importance': importance
+            })
+            
+            # Update metrics
+            self.metrics['patterns_learned'] += 1
+            self.metrics['average_feedback'] = (
+                (self.metrics['average_feedback'] * 
+                 (self.metrics['patterns_learned'] - 1) +
+                 feedback) / self.metrics['patterns_learned']
+            )
+            
+            # Perform training if buffer is full
+            if len(self.training_buffer) >= self.config.batch_size:
+                await self._train_batch()
+            
+            return {
+                'pattern_id': pattern_id,
+                'importance': importance,
+                'adaptation_score': await self._calculate_adaptation()
+            }
             
         except Exception as e:
-            logger.error(f"Error in emotional learning: {e}")
+            logger.error(f"Learning error: {e}")
+            raise
     
-    async def _update_emotion_model(self) -> None:
-        if len(self.emotional_memory) < self.config.batch_size:
+    async def _train_batch(self) -> None:
+        """Train on batch of interactions."""
+        if len(self.training_buffer) < self.config.batch_size:
             return
+            
+        # Prepare batch
+        batch = self.training_buffer[:self.config.batch_size]
+        self.training_buffer = self.training_buffer[self.config.batch_size:]
         
-        # Sample batch
-        batch = random.sample(
-            self.emotional_memory,
-            self.config.batch_size
-        )
+        # Convert to tensors
+        embeddings = torch.stack([b['embedding'] for b in batch])
+        patterns = [b['pattern'] for b in batch]
+        importances = torch.tensor([b['importance'] for b in batch])
         
-        # Prepare tensors
-        emotion_tensors = []
-        feedback_tensors = []
-        
-        for interaction in batch:
-            emotions = torch.tensor(
-                list(interaction['text_emotions'].values()),
-                dtype=torch.float32
-            )
-            emotion_tensors.append(emotions)
-            feedback_tensors.append(interaction['feedback'])
-        
-        emotions = torch.stack(emotion_tensors)
-        feedback = torch.tensor(feedback_tensors)
-        
-        # Update emotion embeddings
+        # Train network
         self.optimizer.zero_grad()
-        loss = self._compute_learning_loss(emotions, feedback)
+        
+        # Forward pass
+        outputs = self.network(embeddings)
+        
+        # Calculate loss with importance weighting
+        loss = self._calculate_loss(outputs, patterns, importances)
+        
+        # Backward pass
         loss.backward()
         self.optimizer.step()
         
-        self.metrics['learning_iterations'] += 1
-    
-    def _compute_learning_loss(
-        self,
-        emotions: torch.Tensor,
-        feedback: torch.Tensor
-    ) -> torch.Tensor:
-        # Compute similarity between emotions and embeddings
-        similarity = torch.matmul(emotions, self.emotion_embeddings)
-        
-        # Weight similarity by feedback
-        weighted_similarity = similarity * feedback.unsqueeze(1)
-        
-        # Compute loss
-        loss = -torch.mean(weighted_similarity)
-        return loss
-    
-    def _update_metrics(self, feedback: float) -> None:
-        self.metrics['total_interactions'] += 1
-        if feedback > 0.7:
-            self.metrics['successful_responses'] += 1
-        
-        # Update running average
-        self.metrics['average_feedback'] = (
-            (self.metrics['average_feedback'] * (self.metrics['total_interactions'] - 1) +
-             feedback) / self.metrics['total_interactions']
+        # Update metrics
+        self.metrics['training_steps'] += 1
+        self.metrics['average_loss'] = (
+            (self.metrics['average_loss'] * 
+             (self.metrics['training_steps'] - 1) +
+             loss.item()) / self.metrics['training_steps']
         )
     
-    def get_metrics(self) -> Dict[str, float]:
-        return {
-            **self.metrics,
-            'success_rate': (
-                self.metrics['successful_responses'] /
-                max(1, self.metrics['total_interactions'])
+    async def predict_response(
+        self,
+        text: str,
+        context: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, float]:
+        """Predict emotional response."""
+        # Detect emotions
+        text_emotions = await self.emotion_detector.detect_emotions(text)
+        
+        # Create pattern
+        pattern = {
+            'text_emotions': text_emotions,
+            'context': context or {}
+        }
+        
+        # Generate embedding
+        embedding = await self._generate_embedding(pattern)
+        
+        # Get similar patterns
+        similar_patterns = await self.memory.get_similar_patterns(
+            embedding
+        )
+        
+        # Generate response emotions using network
+        with torch.no_grad():
+            predicted_emotions = self.network(
+                embedding.unsqueeze(0)
             )
+        
+        # Convert to dictionary
+        return {
+            f'emotion_{i}': float(v)
+            for i, v in enumerate(predicted_emotions[0])
         }
     
-    def save_state(self, path: str) -> None:
-        state = {
-            'emotion_embeddings': self.emotion_embeddings.data,
-            'metrics': self.metrics,
-            'config': self.config.__dict__,
-            'optimizer': self.optimizer.state_dict()
-        }
-        torch.save(state, path)
+    async def _generate_embedding(
+        self,
+        pattern: Dict[str, Any]
+    ) -> torch.Tensor:
+        """Generate pattern embedding."""
+        # Implementation depends on your embedding model
+        pass
     
-    def load_state(self, path: str) -> None:
-        state = torch.load(path)
-        self.emotion_embeddings.data = state['emotion_embeddings']
-        self.metrics = state['metrics']
-        self.config = EmotionalLearningConfig(**state['config'])
-        self.optimizer.load_state_dict(state['optimizer'])
+    async def _calculate_importance(
+        self,
+        pattern: Dict[str, Any],
+        embedding: torch.Tensor,
+        feedback: float
+    ) -> float:
+        """Calculate pattern importance."""
+        # Basic importance calculation
+        base_importance = feedback
+        
+        # Add novelty factor
+        similar_patterns = await self.memory.get_similar_patterns(
+            embedding,
+            limit=1
+        )
+        if similar_patterns:
+            novelty = 1.0 - torch.cosine_similarity(
+                embedding.unsqueeze(0),
+                self.pattern_embeddings[similar_patterns[0]['id']].unsqueeze(0)
+            ).item()
+            base_importance *= (1 + novelty)
+        
+        return min(1.0, max(0.0, base_importance))
+    
+    async def _calculate_adaptation(self) -> float:
+        """Calculate system adaptation score."""
+        if len(self.adaptation_history) < 2:
+            return 0.0
+            
+        recent_scores = list(self.adaptation_history)[-10:]
+        return np.mean([
+            abs(recent_scores[i] - recent_scores[i-1])
+            for i in range(1, len(recent_scores))
+        ])
+    
+    async def get_metrics(self) -> Dict[str, float]:
+        """Get learning system metrics."""
+        return {
+            'patterns_learned': self.metrics['patterns_learned'],
+            'average_feedback': self.metrics['average_feedback'],
+            'training_steps': self.metrics['training_steps'],
+            'average_loss': self.metrics['average_loss'],
+            'adaptation_score': await self._calculate_adaptation(),
+            'memory_usage': len(self.memory.patterns)
+        }
+    
+    def __del__(self):
+        """Cleanup resources."""
+        if hasattr(self, '_executor'):
+            self._executor.shutdown(wait=False)
